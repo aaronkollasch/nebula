@@ -8,6 +8,7 @@ import (
 	"net"
 	"os/exec"
 	"strconv"
+	"bytes"
 
 	"github.com/sirupsen/logrus"
 	"github.com/songgao/water"
@@ -89,6 +90,21 @@ func (c *Tun) Activate() error {
 		if err != nil {
 			return fmt.Errorf("failed to add the unsafe_route %s: %v", r.route.String(), err)
 		}
+	}
+
+	cmd := exec.Command(
+		"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-Command",
+		fmt.Sprintf("Set-NetConnectionProfile -InterfaceAlias \"%s\" -NetworkCategory Private", c.Device),
+	)
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	if err != nil {
+		fmt.Println(out.String())
+		fmt.Println(stderr.String())
+		fmt.Printf("failed to set connection profile for interface %s: %v\n", c.Device, err)
 	}
 
 	return nil
