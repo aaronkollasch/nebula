@@ -28,7 +28,7 @@ ifndef BUILD_NUMBER
 	endif
 endif
 
-LDFLAGS = -X main.Build=$(BUILD_NUMBER)
+LDFLAGS = -X main.Build=$(BUILD_NUMBER) -extldflags "-static"
 
 ALL_LINUX = linux-amd64 \
 	linux-386 \
@@ -89,8 +89,8 @@ bin-freebsd: build/freebsd-amd64/nebula build/freebsd-amd64/nebula-cert
 	mv $? .
 
 bin:
-	go build $(BUILD_ARGS) -ldflags "$(LDFLAGS)" -o ./nebula${NEBULA_CMD_SUFFIX} ${NEBULA_CMD_PATH}
-	go build $(BUILD_ARGS) -ldflags "$(LDFLAGS)" -o ./nebula-cert${NEBULA_CMD_SUFFIX} ./cmd/nebula-cert
+	CGO_ENABLED=0 GOOS=linux go build $(BUILD_ARGS) -ldflags "$(LDFLAGS)" -o ./nebula${NEBULA_CMD_SUFFIX} ${NEBULA_CMD_PATH}
+	CGO_ENABLED=0 GOOS=linux go build $(BUILD_ARGS) -ldflags "$(LDFLAGS)" -o ./nebula-cert${NEBULA_CMD_SUFFIX} ./cmd/nebula-cert
 
 install:
 	go install $(BUILD_ARGS) -ldflags "$(LDFLAGS)" ${NEBULA_CMD_PATH}
@@ -105,12 +105,12 @@ build/linux-mips-softfloat/%: LDFLAGS += -s -w
 build/%/nebula: .FORCE
 	GOOS=$(firstword $(subst -, , $*)) \
 		GOARCH=$(word 2, $(subst -, ,$*)) $(GOENV) \
-		go build $(BUILD_ARGS) -o $@ -ldflags "$(LDFLAGS)" ${NEBULA_CMD_PATH}
+		CGO_ENABLED=0 go build $(BUILD_ARGS) -o $@ -ldflags "$(LDFLAGS)" ${NEBULA_CMD_PATH}
 
 build/%/nebula-cert: .FORCE
 	GOOS=$(firstword $(subst -, , $*)) \
 		GOARCH=$(word 2, $(subst -, ,$*)) $(GOENV) \
-		go build $(BUILD_ARGS) -o $@ -ldflags "$(LDFLAGS)" ./cmd/nebula-cert
+		CGO_ENABLED=0 go build $(BUILD_ARGS) -o $@ -ldflags "$(LDFLAGS)" ./cmd/nebula-cert
 
 build/%/nebula.exe: build/%/nebula
 	mv $< $@
