@@ -7,12 +7,14 @@ import (
 	"os/signal"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/slackhq/nebula/cert"
 	"github.com/slackhq/nebula/header"
 	"github.com/slackhq/nebula/iputil"
 	"github.com/slackhq/nebula/udp"
+	"github.com/vishvananda/netlink"
 )
 
 // Every interaction here needs to take extra care to copy memory and not return or use arguments "as is" when touching
@@ -58,6 +60,30 @@ func (c *Control) Start() {
 
 	// Start reading packets.
 	c.f.run()
+
+	// Get current route
+	link, err := netlink.LinkByName(c.f.inside.Name())
+    if err != nil {
+        c.l.WithError(err).WithField("deviceName", c.f.inside.Name()).
+			Error("failed to get tun device link")
+		return
+    }
+    rl, _ := netlink.RouteList(link, 0)
+    c.l.WithField("routeList", rl).Debug("control.go run1")
+	if len(rl) == 0 {
+        c.l.WithField("device", link).Error("no routes for device")
+		return
+    }
+    route := rl[0]
+
+	// Check for route after a short time and replace if missing
+	time.Sleep(3 * time.Second)
+    rl, _ = netlink.RouteList(link, 0)
+    c.l.WithField("routeList", rl).Debug("control.go run2")
+	if len(rl) == 0 {
+        netlink.RouteAdd(&route)
+		c.l.WithField("route", route).Info("Restored route")
+	}
 }
 
 // Stop signals nebula to shutdown, returns after the shutdown is complete
