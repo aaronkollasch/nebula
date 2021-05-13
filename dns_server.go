@@ -78,9 +78,9 @@ func (d *dnsRecords) Add(host, data string) {
 
 func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 	for _, q := range m.Question {
+		zone := plugin.Zones(dnsZones).Matches(q.Name)
 		switch q.Qtype {
 		case dns.TypeA:
-			zone := plugin.Zones(dnsZones).Matches(q.Name)
 			if zone == "" {
 				return fmt.Errorf("Dropped query for A %s", q.Name)
 			}
@@ -110,7 +110,6 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 				}
 			}
 		case dns.TypeDNSKEY:
-			zone := plugin.Zones(dnsZones).Matches(q.Name)
 			if zone == "" {
 				return fmt.Errorf("Dropped query for DNSKEY %s", q.Name)
 			}
@@ -123,7 +122,6 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 			m.Authoritative = true
 			l.Debugf("Accepted query for DNSKEY %s", q.Name)
 		default:
-			zone := plugin.Zones(dnsZones).Matches(q.Name)
 			if zone == "" {
 				return fmt.Errorf("Dropped query for %s %s", dns.Type(q.Qtype).String(), q.Name)
 			}
@@ -145,6 +143,8 @@ func handleDnsRequest(l *logrus.Logger, w dns.ResponseWriter, r *dns.Msg) {
 		       l.Debug(err.Error())
 		       return
 		}
+	default:
+		return
 	}
 
 	r.Answer = append(r.Answer, m.Answer...)
@@ -217,7 +217,6 @@ func getDnsKeys(c *config.C) []string {
 	return c.GetStringSlice("lighthouse.dns.dnssec_keys", []string{})
 }
 
-
 func isZSK(k dnssec.DNSKEY) bool {
 	return k.K.Flags&(1<<8) == (1<<8) && k.K.Flags&1 == 0
 }
@@ -226,16 +225,14 @@ func isKSK(k dnssec.DNSKEY) bool {
         return k.K.Flags&(1<<8) == (1<<8) && k.K.Flags&1 == 1
 }
 
-func dnssecParse(l *logrus.Logger, c *config.C) {
-	dnsZones = getDnsZones(c)
-	ks := getDnsKeys(c)
+func dnssecParse(l *logrus.Logger, ks []string) {
 	err := errors.New("")
 	dnsKeys, err = keyParse(ks)
 	if err != nil {
-		l.Debug(err.Error())
+		l.WithError(err).Errorf("Failed to load DNSSEC keys")
 	} else {
 		for _, k := range dnsKeys {
-			l.WithField("key", k.K.String()).Info("Loaded DNSSEC key")
+			l.WithField("key", k.K.String()).WithField("tag", k.K.KeyTag()).Info("Loaded DNSSEC key")
 		}
 	}
 	zsk, ksk := 0,0
@@ -258,7 +255,7 @@ func dnssecParse(l *logrus.Logger, c *config.C) {
 			}
 		}
 		if !ok {
-			l.WithField("key", k.K.String()).Debug("Did not accept DNSSEC key")
+			l.WithField("key", k.K.String()).WithField("tag", k.K.KeyTag()).Error("Did not accept DNSSEC key")
 		}
 	}
 	capacity := 10000
@@ -266,8 +263,10 @@ func dnssecParse(l *logrus.Logger, c *config.C) {
 }
 
 func startDns(l *logrus.Logger, c *config.C) {
-        dnsAddr = getDnsServerAddr(c)
-	dnssecParse(l, c)
+	dnsAddr = getDnsServerAddr(c)
+	dnsZones = getDnsZones(c)
+	ks := getDnsKeys(c)
+	dnssecParse(l, ks)
 	dnsServer = &dns.Server{Addr: dnsAddr, Net: "udp"}
 	l.WithField("dnsListener", dnsAddr).Infof("Starting DNS responder")
 	err := dnsServer.ListenAndServe()
