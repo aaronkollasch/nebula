@@ -33,7 +33,7 @@ lighthouse:
     # The DNS host defines the IP to bind the dns listener to. This also allows binding to the nebula node IP.
     #host: 0.0.0.0
     #port: 53
-    # Use zones to filter DNS responses to those ending with a FQDN
+    # Use zones to filter DNS responses
     #zones:
     #- nebula.example.com.
     # Paths to DNSSEC keys. Leave empty to disable DNSSEC. To create DNSSEC keys, use dnssec-keygen.
