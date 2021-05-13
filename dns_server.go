@@ -25,6 +25,7 @@ var dnsR *dnsRecords
 var dnsServer *dns.Server
 var dnsAddr string
 var dnsZones []string
+var dnsSoa *dns.SOA
 var dnsKeys []*dnssec.DNSKEY
 var dnsSec dnssec.Dnssec
 
@@ -121,6 +122,25 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 			m.Answer = keys
 			m.Authoritative = true
 			l.Debugf("Accepted query for DNSKEY %s", q.Name)
+		case dns.TypeSOA:
+			if zone == "" || dnsSoa == nil {
+				return fmt.Errorf("Dropped query for SOA %s", q.Name)
+			}
+			rr := dns.Copy(dnsSoa)
+			rr.Header().Name = zone
+			m.Answer = append(m.Answer, rr)
+			m.Authoritative = true
+			l.Debugf("Accepted query for SOA %s", q.Name)
+		case dns.TypeNS:
+			if zone == "" || dnsSoa == nil {
+                                return fmt.Errorf("Dropped query for NS %s", q.Name)
+                        }
+			rr, err := dns.NewRR(fmt.Sprintf("%s NS %s", zone, dnsSoa.Ns))
+			if err == nil {
+				m.Answer = append(m.Answer, rr)
+				m.Authoritative = true
+			}
+			l.Debugf("Accepted query for NS %s", q.Name)
 		default:
 			if zone == "" {
 				return fmt.Errorf("Dropped query for %s %s", dns.Type(q.Qtype).String(), q.Name)
@@ -194,6 +214,29 @@ func getDnsZones(c *config.C) []string {
 	return zones
 }
 
+func getDnsSoa(c *Config) *dns.SOA {
+	serial := c.GetInt("lighthouse.dns.soa.serial", 0)
+	if serial == 0 {
+		return nil
+	}
+	header := dns.RR_Header{
+		Name: c.GetString("lighthouse.dns.soa.name", ""),
+		Rrtype: dns.TypeSOA,
+		Class: dns.ClassINET,
+		Ttl: uint32(c.GetInt("lighthouse.dns.soa.ttl", 3600)),
+	}
+	return &dns.SOA{
+		Hdr: header,
+		Ns: c.GetString("lighthouse.dns.soa.mname", ""),
+		Mbox: c.GetString("lighthouse.dns.soa.rname", ""),
+		Serial: uint32(serial),
+		Refresh: uint32(c.GetInt("lighthouse.dns.soa.refresh", 900)),
+		Retry: uint32(c.GetInt("lighthouse.dns.soa.retry", 900)),
+		Expire: uint32(c.GetInt("lighthouse.dns.soa.expire", 3600)),
+		Minttl: uint32(c.GetInt("lighthouse.dns.soa.minimum", 3600)),
+	}
+}
+
 func keyParse(ks []string) ([]*dnssec.DNSKEY, error) {
 	keys := []*dnssec.DNSKEY{}
 	for _, k := range ks {
@@ -265,6 +308,7 @@ func dnssecParse(l *logrus.Logger, ks []string) {
 func startDns(l *logrus.Logger, c *config.C) {
 	dnsAddr = getDnsServerAddr(c)
 	dnsZones = getDnsZones(c)
+	dnsSoa = getDnsSoa(c)
 	ks := getDnsKeys(c)
 	dnssecParse(l, ks)
 	dnsServer = &dns.Server{Addr: dnsAddr, Net: "udp"}
