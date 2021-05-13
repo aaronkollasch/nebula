@@ -80,7 +80,7 @@ func (d *dnsRecords) Add(host, data string) {
 func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 	for _, q := range m.Question {
 		zone := plugin.Zones(dnsZones).Matches(q.Name)
-		if zone == "" && q.Qtype != dns.TypeTXT {
+		if len(dnsZones) > 0 &&  zone == "" && q.Qtype != dns.TypeTXT {
 			return fmt.Errorf("Dropped query for %s %s", dns.Type(q.Qtype).String(), q.Name)
 		}
 		switch q.Qtype {
