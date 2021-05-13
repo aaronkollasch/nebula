@@ -78,14 +78,17 @@ func (d *dnsRecords) Add(host, data string) {
 }
 
 func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
+	a, _, _ := net.SplitHostPort(w.RemoteAddr().String())
+	b := net.ParseIP(a)
 	for _, q := range m.Question {
 		zone := plugin.Zones(dnsZones).Matches(q.Name)
+		qtype := dns.Type(q.Qtype).String()
 		if len(dnsZones) > 0 &&  zone == "" && q.Qtype != dns.TypeTXT {
-			return fmt.Errorf("Dropped query for %s %s", dns.Type(q.Qtype).String(), q.Name)
+			l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
+			return errors.New("Dropped query")
 		}
 		switch q.Qtype {
 		case dns.TypeA:
-			l.Debugf("Accepted query for A %s", q.Name)
 			ip := dnsR.Query(q.Name)
 			if ip != "" {
 				rr, err := dns.NewRR(fmt.Sprintf("%s A %s", q.Name, ip))
@@ -95,14 +98,12 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 				}
 			}
 		case dns.TypeTXT:
-			a, _, _ := net.SplitHostPort(w.RemoteAddr().String())
-			b := net.ParseIP(a)
 			// We don't answer these queries from non nebula nodes or localhost
 			//l.Debugf("Does %s contain %s", b, dnsR.hostMap.vpnCIDR)
 			if zone == "" && !dnsR.hostMap.vpnCIDR.Contains(b) && a != "127.0.0.1" {
-				return fmt.Errorf("Dropped query for TXT %s from %s", q.Name, a)
+				l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
+				return errors.New("Dropped query")
 			}
-			l.Debugf("Accepted query for TXT %s from %s", q.Name, a)
 			if dnsR.hostMap.vpnCIDR.Contains(b) || a == "127.0.0.1" {
 				ip := dnsR.QueryCert(q.Name)
 				if ip != "" {
@@ -120,29 +121,27 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 			}
 			m.Answer = keys
 			m.Authoritative = true
-			l.Debugf("Accepted query for DNSKEY %s", q.Name)
 		case dns.TypeSOA:
 			if dnsSoa == nil {
-				return fmt.Errorf("Dropped query for SOA %s", q.Name)
+				l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
+				return errors.New("Dropped query")
 			}
 			rr := dns.Copy(dnsSoa)
 			rr.Header().Name = zone
 			m.Answer = append(m.Answer, rr)
 			m.Authoritative = true
-			l.Debugf("Accepted query for SOA %s", q.Name)
 		case dns.TypeNS:
 			if dnsSoa == nil {
-                                return fmt.Errorf("Dropped query for NS %s", q.Name)
+                                l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
+				return errors.New("Dropped query")
                         }
 			rr, err := dns.NewRR(fmt.Sprintf("%s NS %s", zone, dnsSoa.Ns))
 			if err == nil {
 				m.Answer = append(m.Answer, rr)
 				m.Authoritative = true
 			}
-			l.Debugf("Accepted query for NS %s", q.Name)
-		default:
-			l.Debugf("Unsupported query for %s %s", dns.Type(q.Qtype).String(), q.Name)
 		}
+		l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Accepted DNS query")
 	}
 	return nil
 }
@@ -156,7 +155,6 @@ func handleDnsRequest(l *logrus.Logger, w dns.ResponseWriter, r *dns.Msg) {
 	case dns.OpcodeQuery:
 		err := parseQuery(l, m, w)
 		if err != nil {
-		       l.Debug(err.Error())
 		       return
 		}
 	default:
