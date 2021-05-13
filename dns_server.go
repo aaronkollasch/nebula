@@ -112,23 +112,18 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 				}
 			}
 		case dns.TypeDNSKEY:
-			accept := false
-			for _, z := range dnsZones {
-				if q.Name == z {
-					keys := make([]dns.RR, len(dnsKeys))
-					for i, k := range dnsKeys {
-						keys[i] = dns.Copy(k.K)
-						keys[i].Header().Name = z
-					}
-					m.Answer = keys
-					m.Authoritative = true
-					l.Debugf("Accepted query for DNSKEY %s", q.Name)
-					accept = true
-				}
-			}
-			if !accept {
+			zone := plugin.Zones(dnsZones).Matches(q.Name)
+			if zone == "" {
 				return fmt.Errorf("Dropped query for DNSKEY %s", q.Name)
 			}
+			keys := make([]dns.RR, len(dnsKeys))
+			for i, k := range dnsKeys {
+				keys[i] = dns.Copy(k.K)
+				keys[i].Header().Name = zone
+			}
+			m.Answer = keys
+			m.Authoritative = true
+			l.Debugf("Accepted query for DNSKEY %s", q.Name)
 		default:
 			zone := plugin.Zones(dnsZones).Matches(q.Name)
 			if zone == "" {
