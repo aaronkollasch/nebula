@@ -18,12 +18,13 @@ import (
 var Build string
 
 func main() {
-	configPath := flag.String("config", "", "Path to either a file or directory to load configuration from")
-	configTest := flag.Bool("test", false, "Test the config and print the end result. Non zero exit indicates a faulty config")
-	printVersion := flag.Bool("version", false, "Print version")
-	printUsage := flag.Bool("help", false, "Print command line usage")
+	fs := flag.NewFlagSet("nebula", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to either a file or directory to load configuration from")
+	configTest := fs.Bool("test", false, "Test the config and print the end result. Non zero exit indicates a faulty config")
+	printVersion := fs.Bool("version", false, "Print version")
+	printUsage := fs.Bool("help", false, "Print command line usage")
 
-	flag.Parse()
+	fs.Parse(os.Args[1:])
 
 	if *printVersion {
 		fmt.Printf("Version: %s\n", Build)
@@ -31,13 +32,13 @@ func main() {
 	}
 
 	if *printUsage {
-		flag.Usage()
+		fs.Usage()
 		os.Exit(0)
 	}
 
 	if *configPath == "" {
 		fmt.Println("-config flag must be set")
-		flag.Usage()
+		fs.Usage()
 		os.Exit(1)
 	}
 
