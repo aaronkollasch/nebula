@@ -25,7 +25,6 @@ var dnsR *dnsRecords
 var dnsServer *dns.Server
 var dnsAddr string
 var dnsZones []string
-var dnsKey *dnssec.DNSKEY
 var dnsKeys []*dnssec.DNSKEY
 var dnsSec dnssec.Dnssec
 
@@ -239,7 +238,6 @@ func dnssecParse(l *logrus.Logger, c *config.C) {
 			ksk++
 		} else if isZSK(*k) {
 			zsk++
-			dnsKey = k
 		}
 	}
 	splitkeys := zsk > 0 && ksk > 0
