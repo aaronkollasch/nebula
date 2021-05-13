@@ -229,7 +229,7 @@ func dnssecParse(l *logrus.Logger, c *config.C) {
 		l.Debug(err.Error())
 	} else {
 		for _, k := range dnsKeys {
-			l.WithField("key", k.K.String()).Info("loaded key")
+			l.WithField("key", k.K.String()).Info("Loaded DNSSEC key")
 		}
 	}
 	zsk, ksk := 0,0
@@ -252,7 +252,7 @@ func dnssecParse(l *logrus.Logger, c *config.C) {
 			}
 		}
 		if !ok {
-			l.WithField("key", k.K.String()).Debug("did not accept key")
+			l.WithField("key", k.K.String()).Debug("Did not accept DNSSEC key")
 		}
 	}
 	capacity := 10000
@@ -272,11 +272,6 @@ func startDns(l *logrus.Logger, c *config.C) {
 }
 
 func reloadDns(l *logrus.Logger, c *config.C) {
-	if dnsAddr == getDnsServerAddr(c) {
-		l.Debug("No DNS server config change detected")
-		return
-	}
-
 	l.Debug("Restarting DNS server")
 	dnsServer.Shutdown()
 	go startDns(l, c)
