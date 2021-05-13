@@ -97,15 +97,17 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 			b := net.ParseIP(a)
 			// We don't answer these queries from non nebula nodes or localhost
 			//l.Debugf("Does %s contain %s", b, dnsR.hostMap.vpnCIDR)
-			if !dnsR.hostMap.vpnCIDR.Contains(b) && a != "127.0.0.1" {
+			if (zone == "" || dnsSoa == nil) && !dnsR.hostMap.vpnCIDR.Contains(b) && a != "127.0.0.1" {
 				return fmt.Errorf("Dropped query for TXT %s", q.Name)
 			}
 			l.Debugf("Accepted query for TXT %s", q.Name)
-			ip := dnsR.QueryCert(q.Name)
-			if ip != "" {
-				rr, err := dns.NewRR(fmt.Sprintf("%s TXT %s", q.Name, ip))
-				if err == nil {
-					m.Answer = append(m.Answer, rr)
+			if !dnsR.hostMap.vpnCIDR.Contains(b) && a != "127.0.0.1" {
+				ip := dnsR.QueryCert(q.Name)
+				if ip != "" {
+					rr, err := dns.NewRR(fmt.Sprintf("%s TXT %s", q.Name, ip))
+					if err == nil {
+						m.Answer = append(m.Answer, rr)
+					}
 				}
 			}
 		case dns.TypeDNSKEY:
