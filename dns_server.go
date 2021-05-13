@@ -23,7 +23,6 @@ var dnsR *dnsRecords
 var dnsServer *dns.Server
 var dnsAddr string
 var dnsZones []string
-var dnsKey *dnssec.DNSKEY
 var dnsKeys []*dnssec.DNSKEY
 var dnsSec dnssec.Dnssec
 
@@ -238,7 +237,6 @@ func dnssecParse(l *logrus.Logger, c *Config) {
 			ksk++
 		} else if isZSK(*k) {
 			zsk++
-			dnsKey = k
 		}
 	}
 	splitkeys := zsk > 0 && ksk > 0
@@ -261,7 +259,7 @@ func dnssecParse(l *logrus.Logger, c *Config) {
 }
 
 func startDns(l *logrus.Logger, c *Config) {
-        dnsAddr = getDnsServerAddr(c)
+	dnsAddr = getDnsServerAddr(c)
 	dnssecParse(l, c)
 	dnsServer = &dns.Server{Addr: dnsAddr, Net: "udp"}
 	l.WithField("dnsListener", dnsAddr).Infof("Starting DNS responder")
