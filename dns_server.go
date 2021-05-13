@@ -8,7 +8,6 @@ import (
 	"strings"
 	"errors"
 	"time"
-	_ "unsafe"
 
 	"github.com/miekg/dns"
 	"github.com/sirupsen/logrus"
