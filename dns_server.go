@@ -146,18 +146,19 @@ func handleDnsRequest(l *logrus.Logger, w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	r.Answer = append(r.Answer, m.Answer...)
+	r.Authoritative = m.Authoritative
+	//parseQuery currently only sets m.Answer, not Ns or Extra. This could change.
+
 	state := request.Request{W: w, Req: r}
-	if len(dnsKeys) > 0 && state.Do() {
-		zone := plugin.Zones(dnsZones).Matches(state.Name())
-		if zone == "" {
-			w.WriteMsg(m)
-			return
-		}
+	zone := plugin.Zones(dnsZones).Matches(state.Name())
+	if len(dnsKeys) > 0 && state.Do() && zone != "" {
 		state.Zone = zone
 		r = dnsSec.Sign(state, time.Now().UTC(), "")
+		m.Answer = r.Answer
+		m.Ns = r.Ns
+		m.Extra = r.Extra
 	}
 
-	m.Answer = r.Answer
 	w.WriteMsg(m)
 }
 
