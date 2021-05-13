@@ -99,11 +99,11 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 			b := net.ParseIP(a)
 			// We don't answer these queries from non nebula nodes or localhost
 			//l.Debugf("Does %s contain %s", b, dnsR.hostMap.vpnCIDR)
-			if dnsSoa == nil && !dnsR.hostMap.vpnCIDR.Contains(b) && a != "127.0.0.1" {
-				return fmt.Errorf("Dropped query for TXT %s", q.Name)
+			if zone == "" && !dnsR.hostMap.vpnCIDR.Contains(b) && a != "127.0.0.1" {
+				return fmt.Errorf("Dropped query for TXT %s from %s", q.Name, a)
 			}
-			l.Debugf("Accepted query for TXT %s", q.Name)
-			if !dnsR.hostMap.vpnCIDR.Contains(b) && a != "127.0.0.1" {
+			l.Debugf("Accepted query for TXT %s from %s", q.Name, a)
+			if dnsR.hostMap.vpnCIDR.Contains(b) || a == "127.0.0.1" {
 				ip := dnsR.QueryCert(q.Name)
 				if ip != "" {
 					rr, err := dns.NewRR(fmt.Sprintf("%s TXT %s", q.Name, ip))
@@ -216,15 +216,15 @@ func getDnsSoa(c *Config) *dns.SOA {
 		return nil
 	}
 	header := dns.RR_Header{
-		Name: c.GetString("lighthouse.dns.soa.name", ""),
+		Name: dns.CanonicalName(c.GetString("lighthouse.dns.soa.name", "")),
 		Rrtype: dns.TypeSOA,
 		Class: dns.ClassINET,
 		Ttl: uint32(c.GetInt("lighthouse.dns.soa.ttl", 3600)),
 	}
 	return &dns.SOA{
 		Hdr: header,
-		Ns: c.GetString("lighthouse.dns.soa.mname", ""),
-		Mbox: c.GetString("lighthouse.dns.soa.rname", ""),
+		Ns: dns.CanonicalName(c.GetString("lighthouse.dns.soa.mname", "")),
+		Mbox: dns.CanonicalName(c.GetString("lighthouse.dns.soa.rname", "")),
 		Serial: uint32(serial),
 		Refresh: uint32(c.GetInt("lighthouse.dns.soa.refresh", 900)),
 		Retry: uint32(c.GetInt("lighthouse.dns.soa.retry", 900)),
