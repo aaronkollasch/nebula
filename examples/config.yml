@@ -29,11 +29,16 @@ lighthouse:
   #serve_dns: false
   #dns:
     # The DNS host defines the IP to bind the dns listener to. This also allows binding to the nebula node IP.
-    # Use domain to filter DNS A responses to those ending with domain.
     #host: 0.0.0.0
     #port: 53
+    # Use zones to filter DNS responses to those ending with a FQDN
     #zones:
-    #dnssec_key_basename:
+    #- nebula.example.com.
+    # Paths to DNSSEC keys. Leave empty to disable DNSSEC. To create DNSSEC keys, use dnssec-keygen.
+    # Provide the key pair's common path and extensions will be appended automatically.
+    # If a ZSK and KSK are provided, both will be used; a single key will be used as a CSK.
+    #dnssec_keys:
+    #- /etc/nebula/Knebula.example.com.+013+12345
   # interval is the number of seconds between updates from this node to a lighthouse.
   # during updates, a node sends information about its current IP addresses to each node.
   interval: 60
