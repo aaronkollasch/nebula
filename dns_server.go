@@ -184,7 +184,11 @@ func getDnsServerAddr(c *Config) string {
 }
 
 func getDnsZones(c *Config) []string {
-	return c.GetStringSlice("lighthouse.dns.zones", []string{})
+	zones := c.GetStringSlice("lighthouse.dns.zones", []string{})
+	for i := range zones {
+		zones[i] = dns.CanonicalName(zones[i])
+	}
+	return zones
 }
 
 func keyParse(ks []string) ([]*dnssec.DNSKEY, error) {
