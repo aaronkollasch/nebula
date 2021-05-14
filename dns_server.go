@@ -22,7 +22,7 @@ var dnsR *dnsRecords
 var dnsServer *dns.Server
 var dnsAddr string
 var dnsZones []string
-var dnsSoa *dns.SOA
+var dnsSoa map[string]*dns.SOA
 var dnsKeys []*dnssec.DNSKEY
 var dnsSec *dnssec.Dnssec
 
@@ -111,7 +111,7 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 				}
 			}
 			// If SOA is enabled, also respond to TXT records
-			if dnsSoa != nil && zone != "" {
+			if _, ok := dnsSoa[zone]; zone != "" && ok {
 				accept = true
 			}
 			if !accept {
@@ -127,20 +127,22 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 			m.Answer = keys
 			m.Authoritative = true
 		case dns.TypeSOA:
-			if dnsSoa == nil {
+			soa, ok := dnsSoa[zone]
+			if !ok {
 				l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
 				return fmt.Errorf("Dropped query")
 			}
-			rr := dns.Copy(dnsSoa)
+			rr := dns.Copy(soa)
 			rr.Header().Name = zone
 			m.Answer = append(m.Answer, rr)
 			m.Authoritative = true
 		case dns.TypeNS:
-			if dnsSoa == nil {
+			soa, ok := dnsSoa[zone]
+			if !ok {
                                 l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
 				return fmt.Errorf("Dropped query")
                         }
-			rr, err := dns.NewRR(fmt.Sprintf("%s NS %s", zone, dnsSoa.Ns))
+			rr, err := dns.NewRR(fmt.Sprintf("%s NS %s", zone, soa.Ns))
 			if err == nil {
 				m.Answer = append(m.Answer, rr)
 				m.Authoritative = true
@@ -212,27 +214,39 @@ func getDnsZones(c *Config) []string {
 	return zones
 }
 
-func getDnsSoa(c *Config) *dns.SOA {
-	serial := c.GetInt("lighthouse.dns.soa.serial", 0)
-	if serial == 0 {
-		return nil
+func getSoaInt(s string) uint32 {
+	i, e := strconv.Atoi(s)
+	if e != nil {
+		return 900
 	}
-	header := dns.RR_Header{
-		Name: dns.CanonicalName(c.GetString("lighthouse.dns.soa.name", "")),
-		Rrtype: dns.TypeSOA,
-		Class: dns.ClassINET,
-		Ttl: uint32(c.GetInt("lighthouse.dns.soa.ttl", 3600)),
+	return uint32(i)
+}
+
+func getDnsSoa(c *Config) map[string]*dns.SOA {
+	soastrs := c.GetMap("lighthouse.dns.soa", map[interface{}]interface{}{})
+	soamap := map[string]*dns.SOA{}
+	for z, s := range soastrs {
+		zone, ok := z.(string)
+		if !ok {continue}
+		soastr, ok := s.(string)
+		if !ok {continue}
+		soaFields := strings.Fields(strings.TrimSpace(soastr))
+		if len(soaFields) < 7 {continue}
+
+		zone = dns.CanonicalName(zone)
+		soa := new(dns.SOA)
+		soa.Hdr = dns.RR_Header{zone, dns.TypeSOA, dns.ClassINET, 3600, 0}
+		soa.Ns = dns.CanonicalName(soaFields[0])
+		soa.Mbox = dns.CanonicalName(soaFields[1])
+		soa.Serial = getSoaInt(soaFields[2])
+		soa.Refresh = getSoaInt(soaFields[3])
+		soa.Retry = getSoaInt(soaFields[4])
+		soa.Expire = getSoaInt(soaFields[5])
+		soa.Minttl = getSoaInt(soaFields[6])
+
+		soamap[zone] = soa
 	}
-	return &dns.SOA{
-		Hdr: header,
-		Ns: dns.CanonicalName(c.GetString("lighthouse.dns.soa.mname", "")),
-		Mbox: dns.CanonicalName(c.GetString("lighthouse.dns.soa.rname", "")),
-		Serial: uint32(serial),
-		Refresh: uint32(c.GetInt("lighthouse.dns.soa.refresh", 900)),
-		Retry: uint32(c.GetInt("lighthouse.dns.soa.retry", 900)),
-		Expire: uint32(c.GetInt("lighthouse.dns.soa.expire", 3600)),
-		Minttl: uint32(c.GetInt("lighthouse.dns.soa.minimum", 3600)),
-	}
+	return soamap
 }
 
 func keyParse(ks []string) ([]*dnssec.DNSKEY, error) {
