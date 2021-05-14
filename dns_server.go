@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"sync"
 	"strings"
-	"errors"
 	"time"
 
 	"github.com/miekg/dns"
@@ -27,7 +26,7 @@ var dnsAddr string
 var dnsZones []string
 var dnsSoa *dns.SOA
 var dnsKeys []*dnssec.DNSKEY
-var dnsSec dnssec.Dnssec
+var dnsSec *dnssec.Dnssec
 
 type dnsRecords struct {
 	sync.RWMutex
@@ -85,7 +84,7 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 		qtype := dns.Type(q.Qtype).String()
 		if len(dnsZones) > 0 &&  zone == "" && q.Qtype != dns.TypeTXT {
 			l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
-			return errors.New("Dropped query")
+			return fmt.Errorf("Dropped query")
 		}
 		switch q.Qtype {
 		case dns.TypeA:
@@ -102,7 +101,7 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 			//l.Debugf("Does %s contain %s", b, dnsR.hostMap.vpnCIDR)
 			if zone == "" && !dnsR.hostMap.vpnCIDR.Contains(b) && a != "127.0.0.1" {
 				l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
-				return errors.New("Dropped query")
+				return fmt.Errorf("Dropped query")
 			}
 			if dnsR.hostMap.vpnCIDR.Contains(b) || a == "127.0.0.1" {
 				ip := dnsR.QueryCert(q.Name)
@@ -124,7 +123,7 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 		case dns.TypeSOA:
 			if dnsSoa == nil {
 				l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
-				return errors.New("Dropped query")
+				return fmt.Errorf("Dropped query")
 			}
 			rr := dns.Copy(dnsSoa)
 			rr.Header().Name = zone
@@ -133,7 +132,7 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 		case dns.TypeNS:
 			if dnsSoa == nil {
                                 l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
-				return errors.New("Dropped query")
+				return fmt.Errorf("Dropped query")
                         }
 			rr, err := dns.NewRR(fmt.Sprintf("%s NS %s", zone, dnsSoa.Ns))
 			if err == nil {
@@ -167,7 +166,7 @@ func handleDnsRequest(l *logrus.Logger, w dns.ResponseWriter, r *dns.Msg) {
 
 	state := request.Request{W: w, Req: r}
 	zone := plugin.Zones(dnsZones).Matches(state.Name())
-	if len(dnsKeys) > 0 && state.Do() && zone != "" {
+	if len(dnsKeys) > 0 && dnsSec != nil && state.Do() && zone != "" {
 		state.Zone = zone
 		r = dnsSec.Sign(state, time.Now().UTC(), "")
 		m.Answer = r.Answer
@@ -262,18 +261,18 @@ func isKSK(k dnssec.DNSKEY) bool {
         return k.K.Flags&(1<<8) == (1<<8) && k.K.Flags&1 == 1
 }
 
-func dnssecParse(l *logrus.Logger, ks []string) {
-	err := errors.New("")
-	dnsKeys, err = keyParse(ks)
+func dnssecParse(l *logrus.Logger, zones []string, ks []string) ([]*dnssec.DNSKEY, *dnssec.Dnssec) {
+	keys, err := keyParse(ks)
 	if err != nil {
 		l.WithError(err).Errorf("Failed to load DNSSEC keys")
+		return []*dnssec.DNSKEY{}, nil
 	} else {
-		for _, k := range dnsKeys {
+		for _, k := range keys {
 			l.WithField("key", k.K.String()).WithField("tag", k.K.KeyTag()).Info("Loaded DNSSEC key")
 		}
 	}
 	zsk, ksk := 0,0
-	for _, k := range dnsKeys {
+	for _, k := range keys {
 		if isKSK(*k) {
 			ksk++
 		} else if isZSK(*k) {
@@ -282,11 +281,11 @@ func dnssecParse(l *logrus.Logger, ks []string) {
 	}
 	splitkeys := zsk > 0 && ksk > 0
 
-	for _, k := range dnsKeys {
+	for _, k := range keys {
 		kname := plugin.Name(k.K.Header().Name)
 		ok := false
-		for i := range dnsZones {
-			if kname.Matches(dnsZones[i]) {
+		for i := range zones {
+			if kname.Matches(zones[i]) {
 				ok = true
 				break
 			}
@@ -296,7 +295,8 @@ func dnssecParse(l *logrus.Logger, ks []string) {
 		}
 	}
 	capacity := 10000
-	dnsSec = dnssec.New(dnsZones, dnsKeys, splitkeys, nil, dns_cache.New(capacity))
+	sec := dnssec.New(zones, keys, splitkeys, nil, dns_cache.New(capacity))
+	return keys, &sec
 }
 
 func startDns(l *logrus.Logger, c *config.C) {
@@ -304,7 +304,7 @@ func startDns(l *logrus.Logger, c *config.C) {
 	dnsZones = getDnsZones(c)
 	dnsSoa = getDnsSoa(c)
 	ks := getDnsKeys(c)
-	dnssecParse(l, ks)
+	dnsKeys, dnsSec = dnssecParse(l, dnsZones, ks)
 	dnsServer = &dns.Server{Addr: dnsAddr, Net: "udp"}
 	l.WithField("dnsListener", dnsAddr).Infof("Starting DNS responder")
 	err := dnsServer.ListenAndServe()
