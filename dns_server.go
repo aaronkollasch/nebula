@@ -80,7 +80,9 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 	for _, q := range m.Question {
 		zone := plugin.Zones(dnsZones).Matches(q.Name)
 		qtype := dns.Type(q.Qtype).String()
-		if len(dnsZones) > 0 &&  zone == "" && q.Qtype != dns.TypeTXT {
+		// Only respond to requests with name matching the correct zone
+		// Exception is responding to TXT records for a nebula IP
+		if len(dnsZones) > 0 && zone == "" && q.Qtype != dns.TypeTXT {
 			l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
 			return fmt.Errorf("Dropped query")
 		}
@@ -95,13 +97,11 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 				}
 			}
 		case dns.TypeTXT:
+			accept := false
 			// We don't answer these queries from non nebula nodes or localhost
 			//l.Debugf("Does %s contain %s", b, dnsR.hostMap.vpnCIDR)
-			if zone == "" && !dnsR.hostMap.vpnCIDR.Contains(b) && a != "127.0.0.1" {
-				l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
-				return fmt.Errorf("Dropped query")
-			}
 			if dnsR.hostMap.vpnCIDR.Contains(b) || a == "127.0.0.1" {
+				accept = true
 				ip := dnsR.QueryCert(q.Name)
 				if ip != "" {
 					rr, err := dns.NewRR(fmt.Sprintf("%s TXT %s", q.Name, ip))
@@ -109,6 +109,14 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 						m.Answer = append(m.Answer, rr)
 					}
 				}
+			}
+			// If SOA is enabled, also respond to TXT records
+			if dnsSoa != nil && zone != "" {
+				accept = true
+			}
+			if !accept {
+				l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
+				return fmt.Errorf("Dropped query")
 			}
 		case dns.TypeDNSKEY:
 			keys := make([]dns.RR, len(dnsKeys))
