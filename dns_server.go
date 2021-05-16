@@ -80,10 +80,11 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 	for _, q := range m.Question {
 		zone := plugin.Zones(dnsZones).Matches(q.Name)
 		qtype := dns.Type(q.Qtype).String()
+		entry := l.WithField("from", w.RemoteAddr().String()).WithField("name", q.Name).WithField("type", qtype)
 		// Only respond to requests with name matching the correct zone
 		// Exception is responding to TXT records for a nebula IP
 		if len(dnsZones) > 0 && zone == "" && q.Qtype != dns.TypeTXT {
-			l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
+			entry.Infof("Dropped  DNS query")
 			return fmt.Errorf("Dropped query")
 		}
 		switch q.Qtype {
@@ -110,12 +111,12 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 					}
 				}
 			}
-			// If SOA is enabled, also respond to TXT records
+			// If SOA is enabled for zone, also respond to TXT records
 			if _, ok := dnsSoa[zone]; zone != "" && ok {
 				accept = true
 			}
 			if !accept {
-				l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
+				entry.Infof("Dropped  DNS query")
 				return fmt.Errorf("Dropped query")
 			}
 		case dns.TypeDNSKEY:
@@ -129,7 +130,7 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 		case dns.TypeSOA:
 			soa, ok := dnsSoa[zone]
 			if !ok {
-				l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
+				entry.Infof("Dropped  DNS query")
 				return fmt.Errorf("Dropped query")
 			}
 			rr := dns.Copy(soa)
@@ -139,7 +140,7 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 		case dns.TypeNS:
 			soa, ok := dnsSoa[zone]
 			if !ok {
-                                l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Dropped  DNS query")
+                                entry.Infof("Dropped  DNS query")
 				return fmt.Errorf("Dropped query")
                         }
 			rr, err := dns.NewRR(fmt.Sprintf("%s NS %s", zone, soa.Ns))
@@ -148,7 +149,7 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 				m.Authoritative = true
 			}
 		}
-		l.WithField("from", a).WithField("name", q.Name).WithField("type", qtype).Infof("Accepted DNS query")
+		entry.Infof("Accepted DNS query")
 	}
 	return nil
 }
@@ -169,7 +170,6 @@ func handleDnsRequest(l *logrus.Logger, w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	r.Answer = append(r.Answer, m.Answer...)
-	r.Authoritative = m.Authoritative
 	//parseQuery currently only sets m.Answer, not Ns or Extra. This could change.
 
 	state := request.Request{W: w, Req: r}
@@ -227,11 +227,17 @@ func getDnsSoa(c *Config) map[string]*dns.SOA {
 	soamap := map[string]*dns.SOA{}
 	for z, s := range soastrs {
 		zone, ok := z.(string)
-		if !ok {continue}
+		if !ok {
+			continue
+		}
 		soastr, ok := s.(string)
-		if !ok {continue}
+		if !ok {
+			continue
+		}
 		soaFields := strings.Fields(strings.TrimSpace(soastr))
-		if len(soaFields) < 7 {continue}
+		if len(soaFields) < 7 {
+			continue
+		}
 
 		zone = dns.CanonicalName(zone)
 		soa := new(dns.SOA)

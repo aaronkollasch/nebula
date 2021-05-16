@@ -34,10 +34,10 @@ lighthouse:
     # Use zones to filter DNS responses
     #zones:
     #  - nebula.example.com.
-    # Use soa to set SOA record and enable NS record
+    # Use soa to set the SOA record and enable NS records
     #soa:
     #  "nebula.example.com.": "ns.example.com. dns.example.com. 1234567890 10000 2400 604800 3600"
-    # Paths to DNSSEC keys. Leave empty to disable DNSSEC. To create DNSSEC keys, use dnssec-keygen.
+    # Paths to DNSSEC keys. Leave empty to disable DNSSEC. To create DNSSEC keys, use dnssec-keygen or equivalent.
     # Provide the key pair's common path and extensions will be appended automatically.
     # If a ZSK and KSK are provided, both will be used; a single key will be used as a CSK.
     #dnssec_keys:
