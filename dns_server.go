@@ -3,6 +3,7 @@ package nebula
 import (
 	"fmt"
 	"net"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,7 +15,6 @@ import (
 	"github.com/slackhq/nebula/iputil"
 	"github.com/coredns/coredns/plugin/dnssec"
 	"github.com/coredns/coredns/plugin"
-	"github.com/coredns/coredns/plugin/dnssec"
 	dns_cache "github.com/coredns/coredns/plugin/pkg/cache"
 	"github.com/coredns/coredns/request"
 )
@@ -243,7 +243,7 @@ func getDnsZones(c *config.C) Zones {
 	return zones
 }
 
-func getDnsDropFiltered(c *Config) bool {
+func getDnsDropFiltered(c *config.C) bool {
 	return c.GetBool("lighthouse.dns.drop_filtered", true)
 }
 
@@ -255,7 +255,7 @@ func getSoaInt(s string) uint32 {
 	return uint32(i)
 }
 
-func getDnsSoa(c *Config) map[string]*dns.SOA {
+func getDnsSoa(c *config.C) map[string]*dns.SOA {
 	soastrs := c.GetMap("lighthouse.dns.soa", map[interface{}]interface{}{})
 	soamap := map[string]*dns.SOA{}
 	for z, s := range soastrs {
@@ -374,6 +374,30 @@ func startDns(l *logrus.Logger, c *config.C) {
 }
 
 func reloadDns(l *logrus.Logger, c *config.C) {
+	dnsKeysMatch := true
+	ks, err := keyParse(getDnsKeys(c))
+	if err != nil {
+		l.WithError(err).Errorf("Failed to load DNSSEC keys")
+		return
+	} else if len(ks) != len(dnsKeys) {
+		dnsKeysMatch = false
+	} else {
+		for i := range ks {
+			if !reflect.DeepEqual(ks[i].K, dnsKeys[i].K) {
+				dnsKeysMatch = false
+			}
+		}
+	}
+
+	if dnsAddr == getDnsServerAddr(c) &&
+		dnsZones.Equal(getDnsZones(c)) &&
+		dnsDropFiltered == getDnsDropFiltered(c) &&
+		reflect.DeepEqual(dnsSoa, getDnsSoa(c)) &&
+		dnsKeysMatch {
+		l.Debug("No DNS server config change detected")
+		return
+	}
+
 	l.Debug("Restarting DNS server")
 	dnsServer.Shutdown()
 	go startDns(l, c)
