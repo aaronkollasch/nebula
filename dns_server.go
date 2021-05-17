@@ -3,6 +3,7 @@ package nebula
 import (
 	"fmt"
 	"net"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -371,6 +372,30 @@ func startDns(l *logrus.Logger, c *Config) {
 }
 
 func reloadDns(l *logrus.Logger, c *Config) {
+	dnsKeysMatch := true
+	ks, err := keyParse(getDnsKeys(c))
+	if err != nil {
+		l.WithError(err).Errorf("Failed to load DNSSEC keys")
+		return
+	} else if len(ks) != len(dnsKeys) {
+		dnsKeysMatch = false
+	} else {
+		for i := range ks {
+			if !reflect.DeepEqual(ks[i].K, dnsKeys[i].K) {
+				dnsKeysMatch = false
+			}
+		}
+	}
+
+	if dnsAddr == getDnsServerAddr(c) &&
+		dnsZones.Equal(getDnsZones(c)) &&
+		dnsDropFiltered == getDnsDropFiltered(c) &&
+		reflect.DeepEqual(dnsSoa, getDnsSoa(c)) &&
+		dnsKeysMatch {
+		l.Debug("No DNS server config change detected")
+		return
+	}
+
 	l.Debug("Restarting DNS server")
 	dnsServer.Shutdown()
 	go startDns(l, c)
