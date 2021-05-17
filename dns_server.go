@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"sync"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -14,8 +14,9 @@ import (
 	"github.com/slackhq/nebula/iputil"
 	"github.com/coredns/coredns/plugin/dnssec"
 	"github.com/coredns/coredns/plugin"
-	"github.com/coredns/coredns/request"
+	"github.com/coredns/coredns/plugin/dnssec"
 	dns_cache "github.com/coredns/coredns/plugin/pkg/cache"
+	"github.com/coredns/coredns/request"
 )
 
 // This whole thing should be rewritten to use context
@@ -168,9 +169,9 @@ func parseQuery(l *logrus.Logger, m *dns.Msg, w dns.ResponseWriter) error {
 		case dns.TypeNS:
 			soa, ok := dnsSoa[zone]
 			if !ok {
-                                entry.Infof("Rejected DNS query")
+				entry.Infof("Rejected DNS query")
 				return fmt.Errorf("Rejected query")
-                        }
+			}
 			rr, err := dns.NewRR(fmt.Sprintf("%s NS %s", zone, soa.Ns))
 			if err == nil {
 				m.Answer = append(m.Answer, rr)
@@ -315,7 +316,7 @@ func isZSK(k dnssec.DNSKEY) bool {
 }
 
 func isKSK(k dnssec.DNSKEY) bool {
-        return k.K.Flags&(1<<8) == (1<<8) && k.K.Flags&1 == 1
+	return k.K.Flags&(1<<8) == (1<<8) && k.K.Flags&1 == 1
 }
 
 func dnssecParse(l *logrus.Logger, zones []string, ks []string) ([]*dnssec.DNSKEY, *dnssec.Dnssec) {
@@ -328,7 +329,7 @@ func dnssecParse(l *logrus.Logger, zones []string, ks []string) ([]*dnssec.DNSKE
 			l.WithField("key", k.K.String()).WithField("tag", k.K.KeyTag()).Info("Loaded DNSSEC key")
 		}
 	}
-	zsk, ksk := 0,0
+	zsk, ksk := 0, 0
 	for _, k := range keys {
 		if isKSK(*k) {
 			ksk++
