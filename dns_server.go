@@ -322,11 +322,8 @@ func dnssecParse(l *logrus.Logger, zones []string, ks []string) ([]*dnssec.DNSKE
 	if err != nil {
 		l.WithError(err).Errorf("Failed to load DNSSEC keys")
 		return []*dnssec.DNSKEY{}, nil
-	} else {
-		for _, k := range keys {
-			l.WithField("key", k.K.String()).WithField("tag", k.K.KeyTag()).Info("Loaded DNSSEC key")
-		}
 	}
+
 	zsk, ksk := 0, 0
 	for _, k := range keys {
 		if isKSK(*k) {
@@ -348,6 +345,8 @@ func dnssecParse(l *logrus.Logger, zones []string, ks []string) ([]*dnssec.DNSKE
 		}
 		if !ok {
 			l.WithField("key", k.K.String()).WithField("tag", k.K.KeyTag()).Error("Did not accept DNSSEC key")
+		} else {
+			l.WithField("key", k.K.String()).WithField("tag", k.K.KeyTag()).Info("Loaded DNSSEC key")
 		}
 	}
 	capacity := 10000
