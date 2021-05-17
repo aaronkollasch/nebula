@@ -33,9 +33,11 @@ lighthouse:
     # The DNS host defines the IP to bind the dns listener to. This also allows binding to the nebula node IP.
     #host: 0.0.0.0
     #port: 53
-    # Use zones to filter DNS responses
+    # Use zones to filter DNS replies
     #zones:
     #  - nebula.example.com.
+    # If drop_filtered is true, drop queries that do not match any of the zones. Otherwise, send an empty reply.
+    #drop_filtered: false
     # Use soa to set the SOA record and enable NS records
     #soa:
     #  "nebula.example.com.": "ns.example.com. dns.example.com. 1234567890 10000 2400 604800 3600"
