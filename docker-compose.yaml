@@ -9,14 +9,12 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     environment:
-      - PUID=1030
-      - PGID=65536
       - TZ=Europe/London
     entrypoint:
       - /nebula
       - -config
       - /volume1/nebula/config.yaml
     volumes:
-      - /volume1/nebula:/volume1/nebula
+      - /volume1/nebula:/volume1/nebula:ro
     restart: always
 
