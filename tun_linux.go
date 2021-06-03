@@ -81,7 +81,59 @@ type ifreqQLEN struct {
 	pad   [8]byte
 }
 
+// Mknod creates a filesystem node (file, device special file or named pipe) named path
+// with attributes specified by mode and dev.
+func Mknod(path string, mode uint32, dev int) error {
+	return unix.Mknod(path, mode, dev)
+}
+
+// Mkdev is used to build the value of linux devices (in /dev/) which specifies major
+// and minor number of the newly created device special file.
+// Linux device nodes are a bit weird due to backwards compat with 16 bit device nodes.
+// They are, from low to high: the lower 8 bits of the minor, then 12 bits of the major,
+// then the top 12 bits of the minor.
+func Mkdev(major, minor int64) uint64 {
+	return unix.Mkdev(uint32(major), uint32(minor))
+}
+
+// $ mknod path c major minor -m 666
+func MknodCHR(path string, major, minor int64) error {
+	newmode := uint32(0666)
+	node_type := uint32(unix.S_IFCHR)
+	mode_t := newmode | node_type
+	device := int(Mkdev(major, minor))
+	err := Mknod(path, mode_t, device)
+	if err != nil {
+		return err
+	}
+	return unix.Chmod(path, newmode)
+}
+
+func makeTunFile(l *logrus.Logger) {
+	// if [ ! -d /dev/net ]; then mkdir /dev/net; fi
+	// if [ ! -e /dev/net/tun ]; then  mknod /dev/net/tun c 10 200; fi
+	if _, err := os.Stat("/dev/net"); err != nil {
+		if os.IsNotExist(err) {
+			l.WithError(err).Debug("Nonexistent /dev/net; creating.")
+			err = unix.Mkdir("/dev/net", 0755)
+			if err != nil {
+				l.WithError(err).Error("Failed to make /dev/net")
+			}
+		}
+	}
+	if _, err := os.Stat("/dev/net/tun"); err != nil {
+		if os.IsNotExist(err) {
+			l.WithError(err).Debug("Nonexistent /dev/net/tun; creating.")
+			err = MknodCHR("/dev/net/tun", 10, 200)
+			if err != nil {
+				l.WithError(err).Error("Failed to make /dev/net/tun")
+			}
+		}
+	}
+}
+
 func newTunFromFd(l *logrus.Logger, deviceFd int, cidr *net.IPNet, defaultMTU int, routes []route, unsafeRoutes []route, txQueueLen int) (ifce *Tun, err error) {
+	makeTunFile(l)
 
 	file := os.NewFile(uintptr(deviceFd), "/dev/net/tun")
 
@@ -100,6 +152,8 @@ func newTunFromFd(l *logrus.Logger, deviceFd int, cidr *net.IPNet, defaultMTU in
 }
 
 func newTun(l *logrus.Logger, deviceName string, cidr *net.IPNet, defaultMTU int, routes []route, unsafeRoutes []route, txQueueLen int, multiqueue bool) (ifce *Tun, err error) {
+	makeTunFile(l)
+
 	fd, err := unix.Open("/dev/net/tun", os.O_RDWR, 0)
 	if err != nil {
 		return nil, err
