@@ -1,7 +1,7 @@
 version: '2.1'
 services:
   nebula:
-    image: nebula
+    image: aaronkollasch/nebula:1.0
     container_name: nebula
     network_mode: host
     cap_add:
@@ -9,12 +9,12 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     environment:
-      - TZ=Europe/London
+      - TZ=UTC
     entrypoint:
       - /nebula
       - -config
-      - /volume1/nebula/config.yaml
+      - /etc/nebula/config.lighthouse.yaml
     volumes:
-      - /volume1/nebula:/volume1/nebula:ro
+      - /etc/nebula:/etc/nebula:ro
     restart: always
 
