@@ -1,7 +1,7 @@
 #syntax=docker/dockerfile:1.2
 
 #############      builder       #############
-FROM golang:1.16-alpine AS builder
+FROM golang:1.18-alpine AS builder
 
 WORKDIR /go/src/github.com/slackhq/nebula
 
