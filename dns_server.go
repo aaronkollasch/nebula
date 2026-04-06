@@ -402,7 +402,7 @@ func dnssecParse(l *logrus.Logger, zones []string, ks []string) ([]*dnssec.DNSKE
 		}
 	}
 	capacity := 10000
-	sec := dnssec.New(dnsZones, keys, splitkeys, nil, dns_cache.New(capacity))
+	sec := dnssec.New(dnsZones, keys, splitkeys, nil, dns_cache.New[[]dns.RR](capacity))
 	return keys, &sec
 }
 
