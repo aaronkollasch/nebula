@@ -22,7 +22,7 @@ ifndef BUILD_NUMBER
 	endif
 endif
 
-DOCKER_IMAGE_REPO ?= nebulaoss/nebula
+DOCKER_IMAGE_REPO ?= aaronkollasch/nebula
 DOCKER_IMAGE_TAG ?= latest
 
 LDFLAGS = -X main.Build=$(BUILD_NUMBER)
@@ -163,7 +163,7 @@ build/nebula-%.zip: build/%/nebula.exe build/%/nebula-cert.exe
 	cd build/$* && zip ../nebula-$*.zip nebula.exe nebula-cert.exe
 
 docker/%: build/%/nebula build/%/nebula-cert
-	docker build . $(DOCKER_BUILD_ARGS) -f docker/Dockerfile --platform "$(subst -,/,$*)" --tag "${DOCKER_IMAGE_REPO}:${DOCKER_IMAGE_TAG}" --tag "${DOCKER_IMAGE_REPO}:$(BUILD_NUMBER)"
+	sudo docker build . $(DOCKER_BUILD_ARGS) -f docker/Dockerfile --platform "$(subst -,/,$*)" --tag "${DOCKER_IMAGE_REPO}:${DOCKER_IMAGE_TAG}" --tag "${DOCKER_IMAGE_REPO}:$(BUILD_NUMBER)"
 
 vet:
 	go vet $(VET_FLAGS) -v ./...
