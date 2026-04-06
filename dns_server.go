@@ -27,6 +27,7 @@ var dnsServer *dns.Server
 var dnsAddr string
 var dnsDomain string
 var dnsZones Zones
+var dnsSoa map[string]*dns.SOA
 var dnsKeys []*dnssec.DNSKEY
 var dnsSec *dnssec.Dnssec
 var dnsDropFiltered bool
@@ -186,6 +187,10 @@ func (d *dnsRecords) parseQuery(m *dns.Msg, w dns.ResponseWriter) error {
 					}
 				}
 			}
+			// If SOA is enabled, also respond to TXT records
+			if _, ok := dnsSoa[zone]; zone != "" && ok {
+				accept = true
+			}
 			if !accept {
 				entry.Infof("Rejected DNS query")
 				return fmt.Errorf("Rejected query")
@@ -198,6 +203,27 @@ func (d *dnsRecords) parseQuery(m *dns.Msg, w dns.ResponseWriter) error {
 			}
 			m.Answer = keys
 			m.Authoritative = true
+		case dns.TypeSOA:
+			soa, ok := dnsSoa[zone]
+			if !ok {
+				entry.Infof("Rejected DNS query")
+				return fmt.Errorf("Rejected query")
+			}
+			rr := dns.Copy(soa)
+			rr.Header().Name = zone
+			m.Answer = append(m.Answer, rr)
+			m.Authoritative = true
+		case dns.TypeNS:
+			soa, ok := dnsSoa[zone]
+			if !ok {
+				entry.Infof("Rejected DNS query")
+				return fmt.Errorf("Rejected query")
+			}
+			rr, err := dns.NewRR(fmt.Sprintf("%s NS %s", zone, soa.Ns))
+			if err == nil {
+				m.Answer = append(m.Answer, rr)
+				m.Authoritative = true
+			}
 		}
 		entry.Infof("Accepted DNS query")
 	}
@@ -275,6 +301,43 @@ func getDnsDropFiltered(c *config.C) bool {
 	return c.GetBool("lighthouse.dns.drop_filtered", true)
 }
 
+func getSoaInt(s string) uint32 {
+	i, e := strconv.Atoi(s)
+	if e != nil {
+		return 900
+	}
+	return uint32(i)
+}
+
+func getDnsSoa(c *config.C) map[string]*dns.SOA {
+	soastrs := c.GetMap("lighthouse.dns.soa", map[string]interface{}{})
+	soamap := map[string]*dns.SOA{}
+	for zone, s := range soastrs {
+		soastr, ok := s.(string)
+		if !ok {
+			continue
+		}
+		soaFields := strings.Fields(strings.TrimSpace(soastr))
+		if len(soaFields) < 7 {
+			continue
+		}
+
+		zone = dns.CanonicalName(zone)
+		soa := new(dns.SOA)
+		soa.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 3600, Rdlength: 0}
+		soa.Ns = dns.CanonicalName(soaFields[0])
+		soa.Mbox = dns.CanonicalName(soaFields[1])
+		soa.Serial = getSoaInt(soaFields[2])
+		soa.Refresh = getSoaInt(soaFields[3])
+		soa.Retry = getSoaInt(soaFields[4])
+		soa.Expire = getSoaInt(soaFields[5])
+		soa.Minttl = getSoaInt(soaFields[6])
+
+		soamap[zone] = soa
+	}
+	return soamap
+}
+
 func keyParse(ks []string) ([]*dnssec.DNSKEY, error) {
 	keys := []*dnssec.DNSKEY{}
 	for _, k := range ks {
@@ -346,6 +409,7 @@ func dnssecParse(l *logrus.Logger, zones []string, ks []string) ([]*dnssec.DNSKE
 func startDns(l *logrus.Logger, c *config.C) {
 	dnsAddr = getDnsServerAddr(c)
 	dnsZones = getDnsZones(c)
+	dnsSoa = getDnsSoa(c)
 	ks := getDnsKeys(c)
 	dnsKeys, dnsSec = dnssecParse(l, dnsZones, ks)
 	dnsServer = &dns.Server{Addr: dnsAddr, Net: "udp"}
@@ -377,6 +441,7 @@ func reloadDns(l *logrus.Logger, c *config.C) {
 	if dnsAddr == getDnsServerAddr(c) &&
 		dnsZones.Equal(getDnsZones(c)) &&
 		dnsDropFiltered == getDnsDropFiltered(c) &&
+		reflect.DeepEqual(dnsSoa, getDnsSoa(c)) &&
 		dnsKeysMatch {
 		l.Debug("No DNS server config change detected")
 		return
