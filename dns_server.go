@@ -4,10 +4,16 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/coredns/coredns/plugin"
+	"github.com/coredns/coredns/plugin/dnssec"
+	dns_cache "github.com/coredns/coredns/plugin/pkg/cache"
+	"github.com/coredns/coredns/request"
 	"github.com/gaissmai/bart"
 	"github.com/miekg/dns"
 	"github.com/sirupsen/logrus"
@@ -20,6 +26,10 @@ var dnsR *dnsRecords
 var dnsServer *dns.Server
 var dnsAddr string
 var dnsDomain string
+var dnsZones Zones
+var dnsKeys []*dnssec.DNSKEY
+var dnsSec *dnssec.Dnssec
+var dnsDropFiltered bool
 
 type dnsRecords struct {
 	sync.RWMutex
@@ -102,6 +112,32 @@ func (d *dnsRecords) Add(host string, addresses []netip.Addr) {
 	}
 }
 
+type Zones []string
+
+func (z Zones) Matches(qname string) string {
+	zone := ""
+	for _, zname := range z {
+		if dns.IsSubDomain(zname, qname) {
+			if len(zname) > len(zone) {
+				zone = zname
+			}
+		}
+	}
+	return zone
+}
+
+func (z Zones) Equal(b []string) bool {
+	if len(z) != len(b) {
+		return false
+	}
+	for i, v := range z {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (d *dnsRecords) isSelfNebulaOrLocalhost(addr string) bool {
 	a, _, _ := net.SplitHostPort(addr)
 	b, err := netip.ParseAddr(a)
@@ -119,40 +155,51 @@ func (d *dnsRecords) isSelfNebulaOrLocalhost(addr string) bool {
 
 func (d *dnsRecords) parseQuery(m *dns.Msg, w dns.ResponseWriter) error {
 	for _, q := range m.Question {
+		qType := dns.TypeToString[q.Qtype]
+		entry := d.l.WithField("from", w.RemoteAddr().String()).WithField("name", q.Name).WithField("type", qType)
+		// If zones are set, reject names not matching any zone (except for TXT queries)
+		zone := dnsZones.Matches(q.Name)
+		if len(dnsZones) > 0 && zone == "" && q.Qtype != dns.TypeTXT {
+			entry.Infof("Rejected DNS query")
+			return fmt.Errorf("Rejected query")
+		}
 		switch q.Qtype {
 		case dns.TypeA, dns.TypeAAAA:
-			qType := dns.TypeToString[q.Qtype]
-			if !strings.HasSuffix(strings.TrimRight(q.Name, "."), dnsDomain) {
-				return fmt.Errorf("Rejected query for %s %s", qType, q.Name)
-			}
-			d.l.Debugf("Accepted query for %s %s", qType, q.Name)
 			ip := d.Query(q.Qtype, q.Name)
 			if ip.IsValid() {
 				rr, err := dns.NewRR(fmt.Sprintf("%s %s %s", q.Name, qType, ip))
 				if err == nil {
 					m.Answer = append(m.Answer, rr)
+					m.Authoritative = true
 				}
 			}
 		case dns.TypeTXT:
+			accept := false
 			// We only answer these queries from nebula nodes or localhost
-			if !d.isSelfNebulaOrLocalhost(w.RemoteAddr().String()) {
-				return fmt.Errorf("Rejected query for TXT %s", q.Name)
-			}
-			d.l.Debugf("Accepted query for TXT %s", q.Name)
-			ip := d.QueryCert(q.Name)
-			if ip != "" {
-				rr, err := dns.NewRR(fmt.Sprintf("%s TXT %s", q.Name, ip))
-				if err == nil {
-					m.Answer = append(m.Answer, rr)
+			if d.isSelfNebulaOrLocalhost(w.RemoteAddr().String()) {
+				accept = true
+				ip := d.QueryCert(q.Name)
+				if ip != "" {
+					rr, err := dns.NewRR(fmt.Sprintf("%s TXT %s", q.Name, ip))
+					if err == nil {
+						m.Answer = append(m.Answer, rr)
+					}
 				}
 			}
-		default:
-			qType := dns.TypeToString[q.Qtype]
-			if !strings.HasSuffix(strings.TrimRight(q.Name, "."), dnsDomain) {
-				return fmt.Errorf("Dropped query for %s %s", qType, q.Name)
+			if !accept {
+				entry.Infof("Rejected DNS query")
+				return fmt.Errorf("Rejected query")
 			}
-			d.l.Debugf("Unsupported query for %s %s", qType, q.Name)
+		case dns.TypeDNSKEY:
+			keys := make([]dns.RR, len(dnsKeys))
+			for i, k := range dnsKeys {
+				keys[i] = dns.Copy(k.K)
+				keys[i].Header().Name = zone
+			}
+			m.Answer = keys
+			m.Authoritative = true
 		}
+		entry.Infof("Accepted DNS query")
 	}
 
 	if len(m.Answer) == 0 {
@@ -166,15 +213,29 @@ func (d *dnsRecords) handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 	m.SetReply(r)
 	m.Compress = false
 
+	filtered := true
 	switch r.Opcode {
 	case dns.OpcodeQuery:
 		err := d.parseQuery(m, w)
-		if err != nil {
-			d.l.Debug(err.Error())
-			return
-		}
+		filtered = (err != nil)
+	}
+	if filtered && dnsDropFiltered {
+		return
 	}
 
+	r.Answer = append(r.Answer, m.Answer...)
+	//parseQuery currently only sets m.Answer, not Ns or Extra. This could change.
+
+	state := request.Request{W: w, Req: r}
+	zone := plugin.Zones(dnsZones).Matches(state.Name())
+	if len(dnsKeys) > 0 && dnsSec != nil && state.Do() && zone != "" {
+
+		state.Zone = zone
+		r = dnsSec.Sign(state, time.Now().UTC(), "")
+		m.Answer = r.Answer
+		m.Ns = r.Ns
+		m.Extra = r.Extra
+	}
 	w.WriteMsg(m)
 }
 
@@ -202,14 +263,93 @@ func getDnsServerAddr(c *config.C) string {
 	return net.JoinHostPort(dnsHost, strconv.Itoa(c.GetInt("lighthouse.dns.port", 53)))
 }
 
-func getDnsDomain(c *config.C) string {
-	return c.GetString("lighthouse.dns.domain", "")
+func getDnsZones(c *config.C) Zones {
+	zones := c.GetStringSlice("lighthouse.dns.zones", []string{})
+	for i := range zones {
+		zones[i] = dns.CanonicalName(zones[i])
+	}
+	return zones
+}
+
+func getDnsDropFiltered(c *config.C) bool {
+	return c.GetBool("lighthouse.dns.drop_filtered", true)
+}
+
+func keyParse(ks []string) ([]*dnssec.DNSKEY, error) {
+	keys := []*dnssec.DNSKEY{}
+	for _, k := range ks {
+		base := k
+		if strings.HasSuffix(k, ".key") {
+			base = k[:len(k)-4]
+		}
+		if strings.HasSuffix(k, ".private") {
+			base = k[:len(k)-8]
+		}
+		k, err := dnssec.ParseKeyFile(base+".key", base+".private")
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, k)
+	}
+	return keys, nil
+}
+
+func getDnsKeys(c *config.C) []string {
+	return c.GetStringSlice("lighthouse.dns.dnssec_keys", []string{})
+}
+
+func isZSK(k dnssec.DNSKEY) bool {
+	return k.K.Flags&(1<<8) == (1<<8) && k.K.Flags&1 == 0
+}
+
+func isKSK(k dnssec.DNSKEY) bool {
+	return k.K.Flags&(1<<8) == (1<<8) && k.K.Flags&1 == 1
+}
+
+func dnssecParse(l *logrus.Logger, zones []string, ks []string) ([]*dnssec.DNSKEY, *dnssec.Dnssec) {
+	keys, err := keyParse(ks)
+	if err != nil {
+		l.WithError(err).Errorf("Failed to load DNSSEC keys")
+		return []*dnssec.DNSKEY{}, nil
+	}
+
+	zsk, ksk := 0, 0
+	for _, k := range keys {
+		if isKSK(*k) {
+			ksk++
+		} else if isZSK(*k) {
+			zsk++
+		}
+	}
+	splitkeys := zsk > 0 && ksk > 0
+
+	for _, k := range keys {
+		kname := plugin.Name(k.K.Header().Name)
+		ok := false
+		for i := range dnsZones {
+			if kname.Matches(dnsZones[i]) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			l.WithField("key", k.K.String()).WithField("tag", k.K.KeyTag()).Error("Did not accept DNSSEC key")
+		} else {
+			l.WithField("key", k.K.String()).WithField("tag", k.K.KeyTag()).Info("Loaded DNSSEC key")
+		}
+	}
+	capacity := 10000
+	sec := dnssec.New(dnsZones, keys, splitkeys, nil, dns_cache.New(capacity))
+	return keys, &sec
 }
 
 func startDns(l *logrus.Logger, c *config.C) {
 	dnsAddr = getDnsServerAddr(c)
-	dnsDomain = getDnsDomain(c)
+	dnsZones = getDnsZones(c)
+	ks := getDnsKeys(c)
+	dnsKeys, dnsSec = dnssecParse(l, dnsZones, ks)
 	dnsServer = &dns.Server{Addr: dnsAddr, Net: "udp"}
+	dnsDropFiltered = getDnsDropFiltered(c)
 	l.WithField("dnsListener", dnsAddr).Info("Starting DNS responder")
 	err := dnsServer.ListenAndServe()
 	defer dnsServer.Shutdown()
@@ -219,7 +359,25 @@ func startDns(l *logrus.Logger, c *config.C) {
 }
 
 func reloadDns(l *logrus.Logger, c *config.C) {
-	if dnsAddr == getDnsServerAddr(c) {
+	dnsKeysMatch := true
+	ks, err := keyParse(getDnsKeys(c))
+	if err != nil {
+		l.WithError(err).Errorf("Failed to load DNSSEC keys")
+		return
+	} else if len(ks) != len(dnsKeys) {
+		dnsKeysMatch = false
+	} else {
+		for i := range ks {
+			if !reflect.DeepEqual(ks[i].K, dnsKeys[i].K) {
+				dnsKeysMatch = false
+			}
+		}
+	}
+
+	if dnsAddr == getDnsServerAddr(c) &&
+		dnsZones.Equal(getDnsZones(c)) &&
+		dnsDropFiltered == getDnsDropFiltered(c) &&
+		dnsKeysMatch {
 		l.Debug("No DNS server config change detected")
 		return
 	}
